@@ -1,0 +1,35 @@
+{
+  "action_manifest_version": 0,
+  "alias_info": {},
+  "app_key": "openvr.component.vrcompositor",
+  "bindings": {
+    "/actions/system": {
+      "sources": [
+        {
+          "inputs": {
+            "click": {
+              "output": "/actions/system/in/opendashboard"
+            }
+          },
+          "mode": "button",
+          "path": "/user/treadmill/input/system"
+        },
+        {
+          "inputs": {
+            "click": {
+              "output": "/actions/system/in/opendashboard"
+            }
+          },
+          "mode": "button",
+          "path": "/user/stylus/input/system"
+        }
+      ]
+    }
+  },
+  "category": "steamvr_input",
+  "controller_type": "desktop_hotkey",
+  "description": "Virtual keyboard button: open/close the SteamVR dashboard",
+  "name": "Default SteamVR Dashboard bindings for Desktop Hotkey",
+  "options": {},
+  "simulated_actions": []
+}
