@@ -35,8 +35,7 @@ It is a small standalone SteamVR add-on designed to coexist with other drivers
 
 ## Install
 
-1. Download the latest build: **Actions → latest run → Artifacts → SteamVR-DesktopHotkey**
-   (or a release zip if available) and extract it somewhere permanent, e.g. `D:\VR\SteamVR-DesktopHotkey`.
+1. Download the latest version
 2. **Close SteamVR.**
 3. Run `install.bat`.
 4. Start SteamVR and make sure **Settings → Startup/Shutdown → Manage Add-ons → desktop_hotkey** is **On**.
