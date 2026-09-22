@@ -533,6 +533,54 @@ namespace {
         return dh::kExitOk;
     }
 
+    std::string DeviceString(vr::TrackedDeviceIndex_t index, vr::ETrackedDeviceProperty prop) {
+        char buffer[256]{};
+        vr::ETrackedPropertyError error = vr::TrackedProp_Success;
+        vr::VRSystem()->GetStringTrackedDeviceProperty(index, prop, buffer, sizeof(buffer), &error);
+        return error == vr::TrackedProp_Success ? buffer : "";
+    }
+
+    void PrintDevicesAndInputSources() {
+        Print("Tracked devices:");
+        for (vr::TrackedDeviceIndex_t i = 0; i < vr::k_unMaxTrackedDeviceCount; i++) {
+            const auto deviceClass = vr::VRSystem()->GetTrackedDeviceClass(i);
+            if (deviceClass == vr::TrackedDeviceClass_Invalid) {
+                continue;
+            }
+            Print("  [%u] class %d, role %d, type '%s', model '%s'",
+                  i,
+                  static_cast<int>(deviceClass),
+                  static_cast<int>(vr::VRSystem()->GetControllerRoleForTrackedDeviceIndex(i)),
+                  DeviceString(i, vr::Prop_ControllerType_String).c_str(),
+                  DeviceString(i, vr::Prop_ModelNumber_String).c_str());
+        }
+
+        Print("Input sources (which device SteamVR assigned to each top-level path):");
+        for (const char* path : {"/user/head",
+                                 "/user/hand/left",
+                                 "/user/hand/right",
+                                 "/user/treadmill",
+                                 "/user/stylus",
+                                 "/user/gamepad"}) {
+            vr::VRInputValueHandle_t handle = vr::k_ulInvalidInputValueHandle;
+            const auto error = vr::VRInput()->GetInputSourceHandle(path, &handle);
+            if (error != vr::VRInputError_None || handle == vr::k_ulInvalidInputValueHandle) {
+                Print("  %-18s not available (error %d)", path, static_cast<int>(error));
+                continue;
+            }
+            vr::InputOriginInfo_t info{};
+            const auto infoError = vr::VRInput()->GetOriginTrackedDeviceInfo(handle, &info, sizeof(info));
+            if (infoError != vr::VRInputError_None) {
+                Print("  %-18s exists, no device attached (error %d)", path, static_cast<int>(infoError));
+                continue;
+            }
+            Print("  %-18s device [%u] type '%s'",
+                  path,
+                  info.trackedDeviceIndex,
+                  DeviceString(info.trackedDeviceIndex, vr::Prop_ControllerType_String).c_str());
+        }
+    }
+
     int RunProbe() {
         Print("Config file: %s", dh::Narrow(g_ini).c_str());
         Print("Log file:    %s", dh::Narrow(g_logPath).c_str());
@@ -551,6 +599,7 @@ namespace {
         }
         auto* overlay = vr::VROverlay();
         Print("SteamVR:     connected, dashboard %s", overlay->IsDashboardVisible() ? "OPEN" : "closed");
+        PrintDevicesAndInputSources();
 
         std::vector<std::string> candidates = {
             OverlayKey(),
