@@ -20,6 +20,7 @@
 #include <openvr.h>
 
 #include <shellapi.h>
+#include <tlhelp32.h>
 
 #include <algorithm>
 #include <chrono>
@@ -221,11 +222,107 @@ namespace {
     // ---------------------------------------------------------------------------------------------
     bool g_vrInitialized = false;
 
-    vr::EVRInitError ConnectToSteamVR() {
+    // True while vrserver has our driver loaded (the driver owns this named event).
+    bool IsDriverLoaded() {
+        HANDLE event = OpenEventW(SYNCHRONIZE, FALSE, dh::kPressEventName);
+        if (!event) {
+            return false;
+        }
+        CloseHandle(event);
+        return true;
+    }
+
+    // Connects as a background app. Some setups reject background apps with error 121
+    // ("Not starting vrserver for background app") even though vrserver is running. In that case,
+    // if our driver is loaded (which proves vrserver is running, so nothing will be launched),
+    // fall back to connecting as an overlay app. No overlay is ever created.
+    vr::EVRInitError ConnectToSteamVR(bool verbose = false) {
         vr::EVRInitError error = vr::VRInitError_None;
         vr::VR_Init(&error, vr::VRApplication_Background);
-        g_vrInitialized = error == vr::VRInitError_None;
+        if (error == vr::VRInitError_None) {
+            g_vrInitialized = true;
+            if (verbose) {
+                Print("VR_Init(background): OK");
+            }
+            return error;
+        }
+        if (verbose) {
+            Print("VR_Init(background): %s", vr::VR_GetVRInitErrorAsEnglishDescription(error));
+        }
+
+        if (error == vr::VRInitError_Init_NoServerForBackgroundApp && IsDriverLoaded()) {
+            vr::EVRInitError overlayError = vr::VRInitError_None;
+            vr::VR_Init(&overlayError, vr::VRApplication_Overlay);
+            if (verbose) {
+                Print("VR_Init(overlay):    %s",
+                      overlayError == vr::VRInitError_None ? "OK" : vr::VR_GetVRInitErrorAsEnglishDescription(overlayError));
+            }
+            if (overlayError == vr::VRInitError_None) {
+                g_vrInitialized = true;
+                return overlayError;
+            }
+        }
+        g_vrInitialized = false;
         return error;
+    }
+
+    bool IsElevated(HANDLE process) {
+        HANDLE token = nullptr;
+        if (!OpenProcessToken(process, TOKEN_QUERY, &token)) {
+            return false;
+        }
+        TOKEN_ELEVATION elevation{};
+        DWORD size = 0;
+        const bool ok = GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size) != FALSE;
+        CloseHandle(token);
+        return ok && elevation.TokenIsElevated != 0;
+    }
+
+    void PrintEnvironment() {
+        Print("Helper:      %s", IsElevated(GetCurrentProcess()) ? "elevated (admin)" : "not elevated");
+
+        char runtime[MAX_PATH * 2]{};
+        uint32_t required = 0;
+        if (vr::VR_GetRuntimePath(runtime, sizeof(runtime), &required)) {
+            Print("Runtime:     %s", runtime);
+        } else {
+            Print("Runtime:     NOT FOUND (VR_IsRuntimeInstalled=%d)", vr::VR_IsRuntimeInstalled() ? 1 : 0);
+        }
+
+        HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        bool found = false;
+        if (snapshot != INVALID_HANDLE_VALUE) {
+            PROCESSENTRY32W entry{};
+            entry.dwSize = sizeof(entry);
+            for (BOOL more = Process32FirstW(snapshot, &entry); more; more = Process32NextW(snapshot, &entry)) {
+                if (_wcsicmp(entry.szExeFile, L"vrserver.exe") != 0 && _wcsicmp(entry.szExeFile, L"vrmonitor.exe") != 0 &&
+                    _wcsicmp(entry.szExeFile, L"vrcompositor.exe") != 0 && _wcsicmp(entry.szExeFile, L"vrdashboard.exe") != 0) {
+                    continue;
+                }
+                found = true;
+                std::string path = "(path not accessible)";
+                const char* elevation = "unknown";
+                HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
+                if (process) {
+                    wchar_t buffer[MAX_PATH * 2]{};
+                    DWORD length = ARRAYSIZE(buffer);
+                    if (QueryFullProcessImageNameW(process, 0, buffer, &length)) {
+                        path = dh::Narrow(buffer);
+                    }
+                    elevation = IsElevated(process) ? "elevated" : "not elevated";
+                    CloseHandle(process);
+                }
+                Print("Process:     %s pid %lu, %s, %s",
+                      dh::Narrow(entry.szExeFile).c_str(),
+                      entry.th32ProcessID,
+                      elevation,
+                      path.c_str());
+            }
+            CloseHandle(snapshot);
+        }
+        if (!found) {
+            Print("Process:     no SteamVR processes running");
+        }
     }
 
     void DisconnectFromSteamVR() {
@@ -321,15 +418,17 @@ namespace {
 
         HANDLE quitEvent = OpenEventW(SYNCHRONIZE, FALSE, dh::kQuitEventName);
 
-        // Wait for vrserver to accept background applications.
-        for (;;) {
+        // Wait for vrserver to accept our connection.
+        for (int attempt = 1;; attempt++) {
             const auto error = ConnectToSteamVR();
             if (error == vr::VRInitError_None) {
                 break;
             }
+            if (attempt == 1 || attempt % 30 == 0) {
+                Print("Waiting for SteamVR (attempt %d): %s", attempt, vr::VR_GetVRInitErrorAsEnglishDescription(error));
+            }
             if (error != vr::VRInitError_Init_NoServerForBackgroundApp && error != vr::VRInitError_Init_HmdNotFound &&
                 error != vr::VRInitError_Init_HmdNotFoundPresenceFailed) {
-                Print("VR_Init failed: %s", vr::VR_GetVRInitErrorAsEnglishDescription(error));
                 return dh::kExitRetry;
             }
             if (quitEvent ? WaitForSingleObject(quitEvent, 2000) == WAIT_OBJECT_0 : (Sleep(2000), false)) {
@@ -337,6 +436,7 @@ namespace {
             }
         }
         Print("Connected to SteamVR");
+        PrintEnvironment();
 
         const std::wstring hotkeyText = dh::IniString(g_ini, L"hotkey", L"keys", kDefaultHotkey);
         UINT modifiers = 0, vk = 0;
@@ -424,13 +524,10 @@ namespace {
         UINT modifiers = 0, vk = 0;
         Print("Hotkey:      %s (%s)", dh::Narrow(hotkeyText).c_str(), ParseHotkey(hotkeyText, modifiers, vk) ? "valid" : "INVALID");
 
-        HANDLE event = OpenEventW(SYNCHRONIZE, FALSE, dh::kPressEventName);
-        Print("Driver:      %s", event ? "loaded" : "NOT loaded (install it and enable it in SteamVR > Manage Add-ons)");
-        if (event) {
-            CloseHandle(event);
-        }
+        Print("Driver:      %s", IsDriverLoaded() ? "loaded" : "NOT loaded (install it and enable it in SteamVR > Manage Add-ons)");
+        PrintEnvironment();
 
-        const auto error = ConnectToSteamVR();
+        const auto error = ConnectToSteamVR(true);
         if (error != vr::VRInitError_None) {
             Print("SteamVR:     not reachable (%s)", vr::VR_GetVRInitErrorAsEnglishDescription(error));
             return dh::kExitError;
