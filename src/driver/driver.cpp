@@ -51,6 +51,15 @@ namespace {
         if (_wcsicmp(value.c_str(), L"stylus") == 0) {
             return vr::TrackedControllerRole_Stylus;
         }
+        if (_wcsicmp(value.c_str(), L"left") == 0) {
+            return vr::TrackedControllerRole_LeftHand;
+        }
+        if (_wcsicmp(value.c_str(), L"right") == 0) {
+            return vr::TrackedControllerRole_RightHand;
+        }
+        if (_wcsicmp(value.c_str(), L"opt_out") == 0) {
+            return vr::TrackedControllerRole_OptOut;
+        }
         return vr::TrackedControllerRole_Treadmill;
     }
 

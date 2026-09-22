@@ -54,7 +54,7 @@ Edit `desktop_hotkey\config.ini` and restart SteamVR:
 | `[dashboard] desktop_overlay_key` | `system.desktop.1` | Overlay key of the Desktop page (`system.desktop.1` = monitor 1 on current SteamVR, `valve.steam.desktop` on older versions); empty = open dashboard on its last page |
 | `[dashboard] when_open` | `close` | `close`, or `desktop_then_close` (switch to Desktop first if another page is shown) |
 | `[driver] start_helper` | `1` | Start the helper with SteamVR |
-| `[driver] role` | `treadmill` | Role of the virtual device: `treadmill` or `stylus` |
+| `[driver] role` | `treadmill` | Input path of the virtual device: `treadmill`, `stylus`, `opt_out`, or (testing only) `left` / `right` |
 | `[driver] press_duration_ms` | `80` | How long the virtual button is held |
 | `[driver] report_pose` | `1` | Report a static pose for the virtual device (some SteamVR versions ignore input from poseless devices); it is still never drawn |
 
