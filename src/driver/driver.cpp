@@ -68,7 +68,8 @@ namespace {
     // ---------------------------------------------------------------------------------------------
     class ButtonDevice final : public vr::ITrackedDeviceServerDriver {
       public:
-        ButtonDevice(vr::ETrackedControllerRole role, bool reportPose) : m_role(role), m_reportPose(reportPose) {
+        ButtonDevice(vr::ETrackedControllerRole role, bool reportPose, int handPriority)
+            : m_role(role), m_reportPose(reportPose), m_handPriority(handPriority) {
         }
 
         vr::EVRInitError Activate(uint32_t objectId) override {
@@ -86,7 +87,7 @@ namespace {
 
             // Not a hand controller: never let SteamVR or games pick it as a left/right hand.
             props->SetInt32Property(container, vr::Prop_ControllerRoleHint_Int32, m_role);
-            props->SetInt32Property(container, vr::Prop_ControllerHandSelectionPriority_Int32, -1000000);
+            props->SetInt32Property(container, vr::Prop_ControllerHandSelectionPriority_Int32, m_handPriority);
 
             // No render model, no battery, nothing to power off.
             props->SetStringProperty(container, vr::Prop_RenderModelName_String, "");
@@ -103,7 +104,10 @@ namespace {
             vr::VRServerDriverHost()->TrackedDevicePoseUpdated(objectId, GetPose(), sizeof(vr::DriverPose_t));
 
             m_active = true;
-            Log("Virtual button device activated (id %u, role %d)", objectId, static_cast<int>(m_role));
+            Log("Virtual button device activated (id %u, role hint %d, hand priority %d)",
+                objectId,
+                static_cast<int>(m_role),
+                m_handPriority);
             return vr::VRInitError_None;
         }
 
@@ -153,6 +157,7 @@ namespace {
       private:
         const vr::ETrackedControllerRole m_role;
         const bool m_reportPose;
+        const int m_handPriority;
         std::atomic<bool> m_active{false};
         uint32_t m_objectId = vr::k_unTrackedDeviceIndexInvalid;
         vr::VRInputComponentHandle_t m_click = vr::k_ulInvalidInputComponentHandle;
@@ -186,7 +191,8 @@ namespace {
             }
 
             const bool reportPose = dh::IniInt(m_ini, L"driver", L"report_pose", 1) != 0;
-            m_device = std::make_unique<ButtonDevice>(role, reportPose);
+            const int handPriority = dh::IniInt(m_ini, L"driver", L"hand_priority", -1000000);
+            m_device = std::make_unique<ButtonDevice>(role, reportPose, handPriority);
             if (!vr::VRServerDriverHost()->TrackedDeviceAdded(
                     "desktop_hotkey_button", vr::TrackedDeviceClass_Controller, m_device.get())) {
                 Log("TrackedDeviceAdded failed");

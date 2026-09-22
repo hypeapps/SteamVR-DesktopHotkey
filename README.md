@@ -56,6 +56,7 @@ Edit `desktop_hotkey\config.ini` and restart SteamVR:
 | `[driver] start_helper` | `1` | Start the helper with SteamVR |
 | `[driver] role` | `treadmill` | Input path of the virtual device: `treadmill`, `stylus`, `opt_out`, or (testing only) `left` / `right` |
 | `[driver] press_duration_ms` | `80` | How long the virtual button is held |
+| `[driver] hand_priority` | `-1000000` | Hand selection priority; keep it low so real controllers always win (set `0` only when testing `role=left`/`right`) |
 | `[driver] report_pose` | `1` | Report a static pose for the virtual device (some SteamVR versions ignore input from poseless devices); it is still never drawn |
 
 Choose an unusual combination: while the helper runs, the shortcut is reserved and other programs

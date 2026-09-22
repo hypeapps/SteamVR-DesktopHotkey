@@ -555,7 +555,7 @@ namespace {
                   DeviceString(i, vr::Prop_ModelNumber_String).c_str());
         }
 
-        Print("Input sources (which device SteamVR assigned to each top-level path):");
+        Print("Input sources (needs an app with an action manifest; 'no data' here is inconclusive):");
         for (const char* path : {"/user/head",
                                  "/user/hand/left",
                                  "/user/hand/right",
