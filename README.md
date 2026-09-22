@@ -16,7 +16,7 @@ It is a small standalone SteamVR add-on designed to coexist with other drivers
 ## How it works
 
 ```
- keyboard ──► desktop_hotkey_helper.exe ──(dashboard closed)──► IVROverlay::ShowDashboard("valve.steam.desktop")
+ keyboard ──► desktop_hotkey_helper.exe ──(dashboard closed)──► IVROverlay::ShowDashboard("system.desktop.1")
                      │
                      └──(dashboard open)──► named event ──► driver_desktop_hotkey.dll
                                                                └► presses the "system" button of a
@@ -51,11 +51,12 @@ Edit `desktop_hotkey\config.ini` and restart SteamVR:
 |---|---|---|
 | `[hotkey] enabled` | `1` | `0` disables the built-in hotkey (command line still works) |
 | `[hotkey] keys` | `Ctrl+Alt+D` | Modifiers `Ctrl` `Alt` `Shift` `Win` + one key (`A`–`Z`, `0`–`9`, `F1`–`F24`, `Home`, `0x7B`, …) |
-| `[dashboard] desktop_overlay_key` | `valve.steam.desktop` | Overlay key of the Desktop page; empty = open dashboard on its last page |
+| `[dashboard] desktop_overlay_key` | `system.desktop.1` | Overlay key of the Desktop page (`system.desktop.1` = monitor 1 on current SteamVR, `valve.steam.desktop` on older versions); empty = open dashboard on its last page |
 | `[dashboard] when_open` | `close` | `close`, or `desktop_then_close` (switch to Desktop first if another page is shown) |
 | `[driver] start_helper` | `1` | Start the helper with SteamVR |
 | `[driver] role` | `treadmill` | Role of the virtual device: `treadmill` or `stylus` |
 | `[driver] press_duration_ms` | `80` | How long the virtual button is held |
+| `[driver] report_pose` | `1` | Report a static pose for the virtual device (some SteamVR versions ignore input from poseless devices); it is still never drawn |
 
 Choose an unusual combination: while the helper runs, the shortcut is reserved and other programs
 (including games) will not receive it.

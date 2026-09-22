@@ -59,7 +59,7 @@ namespace {
     // ---------------------------------------------------------------------------------------------
     class ButtonDevice final : public vr::ITrackedDeviceServerDriver {
       public:
-        explicit ButtonDevice(vr::ETrackedControllerRole role) : m_role(role) {
+        ButtonDevice(vr::ETrackedControllerRole role, bool reportPose) : m_role(role), m_reportPose(reportPose) {
         }
 
         vr::EVRInitError Activate(uint32_t objectId) override {
@@ -79,8 +79,9 @@ namespace {
             props->SetInt32Property(container, vr::Prop_ControllerRoleHint_Int32, m_role);
             props->SetInt32Property(container, vr::Prop_ControllerHandSelectionPriority_Int32, -1000000);
 
-            // No pose, no battery, nothing to power off.
-            props->SetBoolProperty(container, vr::Prop_NeverTracked_Bool, true);
+            // No render model, no battery, nothing to power off.
+            props->SetStringProperty(container, vr::Prop_RenderModelName_String, "");
+            props->SetBoolProperty(container, vr::Prop_NeverTracked_Bool, !m_reportPose);
             props->SetBoolProperty(container, vr::Prop_DeviceProvidesBatteryStatus_Bool, false);
             props->SetBoolProperty(container, vr::Prop_DeviceCanPowerOff_Bool, false);
             props->SetBoolProperty(container, vr::Prop_Identifiable_Bool, false);
@@ -120,10 +121,18 @@ namespace {
             pose.qWorldFromDriverRotation.w = 1.0;
             pose.qDriverFromHeadRotation.w = 1.0;
             pose.qRotation.w = 1.0;
-            pose.poseIsValid = false;
             pose.deviceIsConnected = true;
-            pose.result = vr::TrackingResult_Uninitialized;
+            // Some SteamVR versions ignore input from devices that never report a pose, so by default
+            // we report a static identity pose. The device still has no render model and is not drawn.
+            pose.poseIsValid = m_reportPose;
+            pose.result = m_reportPose ? vr::TrackingResult_Running_OK : vr::TrackingResult_Uninitialized;
             return pose;
+        }
+
+        void RefreshPose() {
+            if (m_active && m_objectId != vr::k_unTrackedDeviceIndexInvalid) {
+                vr::VRServerDriverHost()->TrackedDevicePoseUpdated(m_objectId, GetPose(), sizeof(vr::DriverPose_t));
+            }
         }
 
         void SetPressed(bool pressed) {
@@ -134,6 +143,7 @@ namespace {
 
       private:
         const vr::ETrackedControllerRole m_role;
+        const bool m_reportPose;
         std::atomic<bool> m_active{false};
         uint32_t m_objectId = vr::k_unTrackedDeviceIndexInvalid;
         vr::VRInputComponentHandle_t m_click = vr::k_ulInvalidInputComponentHandle;
@@ -166,7 +176,8 @@ namespace {
                 Log("CreateEvent(press) failed: %lu", GetLastError());
             }
 
-            m_device = std::make_unique<ButtonDevice>(role);
+            const bool reportPose = dh::IniInt(m_ini, L"driver", L"report_pose", 1) != 0;
+            m_device = std::make_unique<ButtonDevice>(role, reportPose);
             if (!vr::VRServerDriverHost()->TrackedDeviceAdded(
                     "desktop_hotkey_button", vr::TrackedDeviceClass_Controller, m_device.get())) {
                 Log("TrackedDeviceAdded failed");
@@ -225,6 +236,7 @@ namespace {
 
             // Give vrserver a moment to finish starting before launching the helper.
             auto nextHelperCheck = Clock::now() + 2s;
+            auto nextPoseUpdate = Clock::now() + 1s;
 
             while (m_running) {
                 const DWORD wait = m_pressEvent ? WaitForSingleObject(m_pressEvent, 50) : (Sleep(50), WAIT_TIMEOUT);
@@ -233,9 +245,16 @@ namespace {
                 }
 
                 if (wait == WAIT_OBJECT_0) {
+                    Log("Press requested, holding the virtual system button for %d ms", m_pressDurationMs);
                     m_device->SetPressed(true);
                     std::this_thread::sleep_for(std::chrono::milliseconds(m_pressDurationMs));
                     m_device->SetPressed(false);
+                    Log("Virtual system button released");
+                }
+
+                if (Clock::now() >= nextPoseUpdate) {
+                    nextPoseUpdate = Clock::now() + 1s;
+                    m_device->RefreshPose();
                 }
 
                 if (Clock::now() >= nextHelperCheck) {

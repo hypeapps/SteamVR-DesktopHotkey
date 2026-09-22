@@ -34,7 +34,7 @@
 namespace {
 
     constexpr const wchar_t* kDefaultHotkey = L"Ctrl+Alt+D";
-    constexpr const wchar_t* kDefaultOverlayKey = L"valve.steam.desktop";
+    constexpr const wchar_t* kDefaultOverlayKey = L"system.desktop.1";
     constexpr int kHotkeyId = 1;
 
     std::wstring g_driverRoot;
@@ -360,12 +360,29 @@ namespace {
         return vr::VROverlay()->IsActiveDashboardOverlay(handle);
     }
 
+    bool OverlayExists(const std::string& key) {
+        vr::VROverlayHandle_t handle = vr::k_ulOverlayHandleInvalid;
+        return !key.empty() && vr::VROverlay()->FindOverlay(key.c_str(), &handle) == vr::VROverlayError_None;
+    }
+
     void OpenDesktop() {
-        const std::string key = OverlayKey();
-        if (key.empty()) {
+        const std::string configured = OverlayKey();
+        if (configured.empty()) {
             Print("Opening dashboard (system button)");
             PressVirtualButton();
             return;
+        }
+
+        // Use the configured key; if SteamVR does not know it, try the keys used by known SteamVR versions.
+        std::string key = configured;
+        if (!OverlayExists(key)) {
+            for (const char* candidate : {"system.desktop.1", "valve.steam.desktop"}) {
+                if (OverlayExists(candidate)) {
+                    Print("Overlay '%s' not found, using '%s'", configured.c_str(), candidate);
+                    key = candidate;
+                    break;
+                }
+            }
         }
         Print("Opening dashboard on '%s'", key.c_str());
         vr::VROverlay()->ShowDashboard(key.c_str());
