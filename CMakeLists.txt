@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(SteamVR-DesktopHotkey LANGUAGES CXX)
+project(SteamVR-DesktopHotkey LANGUAGES C CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "SteamVR-DesktopHotkey is Windows-only.")
@@ -18,10 +18,20 @@ if(MSVC)
     add_compile_options(/W4 /permissive- /utf-8)
 endif()
 
+# --- MinHook (used to shim the headset driver) ------------------------------------------------
+add_library(minhook STATIC
+    third_party/minhook/src/buffer.c
+    third_party/minhook/src/hook.c
+    third_party/minhook/src/trampoline.c
+    third_party/minhook/src/hde/hde32.c
+    third_party/minhook/src/hde/hde64.c)
+target_include_directories(minhook PUBLIC third_party/minhook/include)
+
 # --- SteamVR driver: driver_desktop_hotkey.dll ------------------------------------------------
-add_library(driver_desktop_hotkey SHARED src/driver/driver.cpp)
+add_library(driver_desktop_hotkey SHARED src/driver/driver.cpp src/driver/hmd_shim.cpp)
 set_target_properties(driver_desktop_hotkey PROPERTIES PREFIX "")
-target_include_directories(driver_desktop_hotkey PRIVATE ${OPENVR_DIR}/headers)
+target_include_directories(driver_desktop_hotkey PRIVATE ${OPENVR_DIR}/headers third_party/json)
+target_link_libraries(driver_desktop_hotkey PRIVATE minhook)
 
 # --- Helper process: desktop_hotkey_helper.exe ------------------------------------------------
 add_library(openvr_api SHARED IMPORTED)

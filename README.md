@@ -3,13 +3,13 @@
 Open the **SteamVR dashboard directly on the Desktop view** and close it again with a single keyboard
 shortcut (default `Ctrl+Alt+D`) — no VR controllers needed.
 
-It is a small standalone SteamVR add-on designed to coexist with other drivers
-(e.g. [CustomHeadsetOpenVR](https://github.com/sboys3/CustomHeadsetOpenVR)):
+It is a small SteamVR add-on that works alongside other drivers such as
+[CustomHeadsetOpenVR](https://github.com/sboys3/CustomHeadsetOpenVR):
 
-- **no hooks / no driver shimming** — the headset driver is never touched;
+- it **extends** the headset's input profile with one extra input instead of replacing it, so every
+  input the headset driver provides (volume buttons, taps, proximity sensor, ...) keeps working;
 - **no keyboard hooks, no input injection** — the hotkey uses the standard `RegisterHotKey` API
-  (same as Discord, OBS, Steam overlay); nothing is sent to or injected into games;
-- only public OpenVR APIs.
+  (same as Discord, OBS, Steam overlay); nothing is sent to or injected into games.
 
 > Status: **experimental**. Please report what works on your SteamVR version (see *Testing* below).
 
@@ -19,19 +19,24 @@ It is a small standalone SteamVR add-on designed to coexist with other drivers
  keyboard ──► desktop_hotkey_helper.exe ──(dashboard closed)──► IVROverlay::ShowDashboard("system.desktop.1")
                      │
                      └──(dashboard open)──► named event ──► driver_desktop_hotkey.dll
-                                                               └► presses the "system" button of a
-                                                                  virtual, never-tracked device
-                                                                  (bound to "open/close dashboard")
+                                                               └► presses /input/desktop_hotkey on the
+                                                                  headset, bound to "open/close dashboard"
 ```
 
-1. **Driver** (`driver_desktop_hotkey.dll`) registers one virtual device with a single `/input/system` button.
-   It has no pose and no render model, and uses the `treadmill` controller role, so SteamVR and games
-   never treat it as a hand controller. Its default SteamVR dashboard binding is *open/close dashboard*.
+1. **Driver** (`driver_desktop_hotkey.dll`) hooks `IVRServerDriverHost::TrackedDeviceAdded` and wraps the
+   headset device with a shim that forwards every call to the original driver. Once the original driver has
+   activated the headset, the shim reads the input profile it set, writes a copy of it with one input added
+   (`/input/desktop_hotkey`) plus a dashboard binding for it, and points the headset at that generated
+   profile. The generated files live in `desktop_hotkey/resources/input/generated_*.json`.
    The driver also starts the helper together with SteamVR (and restarts it if it crashes).
 2. **Helper** (`desktop_hotkey_helper.exe`) registers the hotkey and, when pressed:
    - dashboard closed → opens it on the Desktop page (`ShowDashboard`);
-   - dashboard open → asks the driver to press the virtual button, which closes the dashboard.
-   OpenVR has no public "hide dashboard" call, which is why the virtual button exists.
+   - dashboard open → asks the driver to press the extra headset input, which closes the dashboard.
+   OpenVR has no public "hide dashboard" call, which is why the extra input exists.
+
+Why the headset and not a device of our own: SteamVR only acts on the "open/close dashboard" action when
+it comes from `/user/head`. A separate virtual device is registered and bound without any error, but
+pressing its button does nothing (tested with the `treadmill`, `stylus` and hand roles on SteamVR 2.15).
 
 ## Install
 
@@ -54,10 +59,7 @@ Edit `desktop_hotkey\config.ini` and restart SteamVR:
 | `[dashboard] desktop_overlay_key` | `system.desktop.1` | Overlay key of the Desktop page (`system.desktop.1` = monitor 1 on current SteamVR, `valve.steam.desktop` on older versions); empty = open dashboard on its last page |
 | `[dashboard] when_open` | `close` | `close`, or `desktop_then_close` (switch to Desktop first if another page is shown) |
 | `[driver] start_helper` | `1` | Start the helper with SteamVR |
-| `[driver] role` | `treadmill` | Input path of the virtual device: `treadmill`, `stylus`, `opt_out`, or (testing only) `left` / `right` |
-| `[driver] press_duration_ms` | `80` | How long the virtual button is held |
-| `[driver] hand_priority` | `-1000000` | Hand selection priority; keep it low so real controllers always win (set `0` only when testing `role=left`/`right`) |
-| `[driver] report_pose` | `1` | Report a static pose for the virtual device (some SteamVR versions ignore input from poseless devices); it is still never drawn |
+| `[driver] press_duration_ms` | `120` | How long the extra headset input is held |
 
 Choose an unusual combination: while the helper runs, the shortcut is reserved and other programs
 (including games) will not receive it.
@@ -96,9 +98,9 @@ Checklist:
 1. **Open**: press the hotkey with the dashboard closed → dashboard opens on the Desktop page?
    If it opens on another page, fix `desktop_overlay_key` using `--probe`.
 2. **Close**: press the hotkey with the dashboard open → dashboard closes?
-   If not, check *Settings → Controllers → Manage Controller Bindings* for the **Desktop Hotkey** device,
-   or try `role=stylus`.
-3. Headset buttons and your controllers still work as before.
+   If not, look for `[desktop_hotkey]` lines in `vrserver.txt`: they say whether the headset was shimmed,
+   which profile was extended and whether the press reached the headset input.
+3. The headset's own buttons and your controllers still work as before.
 
 Logs:
 
@@ -121,7 +123,9 @@ Every push is built by GitHub Actions; pushing a tag `v*` publishes a release zi
 
 - [OpenVR SDK](https://github.com/ValveSoftware/openvr) (BSD-3-Clause) — headers, import library and
   `openvr_api.dll` in `third_party/openvr`.
-- Idea of a driver-side virtual button for dashboard navigation inspired by
+- [MinHook](https://github.com/TsudaKageyu/minhook) (BSD-2-Clause) — used to hook `TrackedDeviceAdded`.
+- [nlohmann/json](https://github.com/nlohmann/json) (MIT) — reading and writing the input profiles.
+- The driver shimming technique, and the idea of driving the dashboard from a driver-side input, come from
   [mbucchia/SteamVR-Dashboard-KeyboardNav](https://github.com/mbucchia/SteamVR-Dashboard-KeyboardNav) (MIT).
 
 ## License

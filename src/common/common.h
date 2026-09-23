@@ -88,6 +88,16 @@ namespace dh {
         return static_cast<int>(GetPrivateProfileIntW(section, key, fallback, ini.c_str()));
     }
 
+    inline std::wstring Widen(const std::string& s) {
+        if (s.empty()) {
+            return {};
+        }
+        int len = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+        std::wstring out(static_cast<size_t>(len), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), out.data(), len);
+        return out;
+    }
+
     inline std::string Narrow(const std::wstring& s) {
         if (s.empty()) {
             return {};
