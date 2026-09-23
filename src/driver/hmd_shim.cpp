@@ -37,8 +37,17 @@ namespace {
     constexpr const char* kInputComponent = "/input/desktop_hotkey/click";
     constexpr const char* kBindingSourcePath = "/user/head/input/desktop_hotkey";
     constexpr const char* kCompositorAppKey = "openvr.component.vrcompositor";
-    constexpr const char* kGeneratedProfileFile = "generated_hmd_profile.json";
-    constexpr const char* kGeneratedBindingsFile = "generated_hmd_bindings_vrcompositor.json";
+    // Every regeneration writes new file names: SteamVR reloads bindings when the profile path
+    // changes, so rewriting the same file in place would leave the old bindings active.
+    std::atomic<int> g_generation{0};
+
+    std::string GeneratedProfileFile(int generation) {
+        return "generated_hmd_profile_" + std::to_string(generation) + ".json";
+    }
+
+    std::string GeneratedBindingsFile(int generation) {
+        return "generated_hmd_bindings_vrcompositor_" + std::to_string(generation) + ".json";
+    }
 
     std::atomic<vr::VRInputComponentHandle_t> g_component{vr::k_ulInvalidInputComponentHandle};
     std::atomic<vr::PropertyContainerHandle_t> g_container{vr::k_ulInvalidPropertyContainer};
@@ -120,6 +129,21 @@ namespace {
         return directory;
     }
 
+    // Deletes the files left behind by previous SteamVR sessions.
+    void RemoveGeneratedFiles() {
+        const std::wstring pattern = dh::Widen(GeneratedDirectory() + "\\generated_hmd_*.json");
+        WIN32_FIND_DATAW found{};
+        HANDLE search = FindFirstFileW(pattern.c_str(), &found);
+        if (search == INVALID_HANDLE_VALUE) {
+            return;
+        }
+        const std::wstring directory = dh::Widen(GeneratedDirectory());
+        do {
+            DeleteFileW((directory + L"\\" + found.cFileName).c_str());
+        } while (FindNextFileW(search, &found));
+        FindClose(search);
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Profile generation
     // ---------------------------------------------------------------------------------------------
@@ -133,7 +157,9 @@ namespace {
 
     // Copies the dashboard binding file of the original profile and appends our source to it.
     // Returns the file name of the generated binding file (relative to the generated profile).
-    std::string GenerateBindings(const json& originalProfile, const std::string& originalProfileDirectory) {
+    std::string GenerateBindings(const json& originalProfile,
+                                 const std::string& originalProfileDirectory,
+                                 int generation) {
         json bindings;
         bool haveOriginal = false;
 
@@ -190,17 +216,19 @@ namespace {
         cleaned.push_back(MakeOurBindingSource());
         system["sources"] = cleaned;
 
-        const std::string outputPath = GeneratedDirectory() + "\\" + kGeneratedBindingsFile;
+        const std::string fileName = GeneratedBindingsFile(generation);
+        const std::string outputPath = GeneratedDirectory() + "\\" + fileName;
         if (!WriteJsonFile(outputPath, bindings)) {
             return {};
         }
         dh::Log("Wrote '%s'", outputPath.c_str());
-        return kGeneratedBindingsFile;
+        return fileName;
     }
 
     // Generates a copy of the headset's input profile with our extra input, and returns the resource
     // path of the generated profile (empty on failure).
     std::string GenerateProfile(const std::string& originalProfileResource) {
+        const int generation = ++g_generation;
         const std::string originalPath = ResolveResourcePath(originalProfileResource, {});
         json profile;
         std::string originalDirectory;
@@ -227,7 +255,7 @@ namespace {
         input["order"] = 99;
         input["binding_image_point"] = json::array({132, 75});
 
-        const std::string bindingFile = GenerateBindings(profile, originalDirectory);
+        const std::string bindingFile = GenerateBindings(profile, originalDirectory, generation);
         if (bindingFile.empty()) {
             return {};
         }
@@ -247,12 +275,13 @@ namespace {
         defaults.push_back(compositorEntry);
         profile["default_bindings"] = defaults;
 
-        const std::string outputPath = GeneratedDirectory() + "\\" + kGeneratedProfileFile;
+        const std::string fileName = GeneratedProfileFile(generation);
+        const std::string outputPath = GeneratedDirectory() + "\\" + fileName;
         if (!WriteJsonFile(outputPath, profile)) {
             return {};
         }
         dh::Log("Wrote '%s'", outputPath.c_str());
-        return std::string("{") + dh::kDriverName + "}/input/" + kGeneratedProfileFile;
+        return std::string("{") + dh::kDriverName + "}/input/" + fileName;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -350,6 +379,8 @@ namespace {
 namespace dh {
 
     bool InstallHmdShim() {
+        RemoveGeneratedFiles();
+
         if (MH_Initialize() != MH_OK) {
             Log("MinHook could not be initialised");
             return false;
