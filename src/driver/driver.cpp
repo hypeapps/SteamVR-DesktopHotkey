@@ -1,8 +1,8 @@
 // SteamVR-DesktopHotkey - SteamVR driver
 //
 // The driver itself does very little:
-//   1. it installs the headset shim (see hmd_shim.cpp), which adds one extra input to the headset
-//      that is bound to "open/close dashboard";
+//   1. it installs the headset shim (see hmd_shim.cpp), which adds one extra input to the headset,
+//      bound to open the dashboard and to a head-aimed click that closes it;
 //   2. it waits for the helper process to signal a named event and then presses that input;
 //   3. it starts the helper together with SteamVR and restarts it if it crashes.
 //
@@ -41,13 +41,11 @@ namespace {
             m_ini = dh::ConfigPath(m_root);
             Log("Build %s, driver root: %s", dh::kBuildId, dh::Narrow(m_root).c_str());
 
-            m_useSystemButton = dh::IniInt(m_ini, L"driver", L"use_system_button", 0) != 0;
             m_pressDurationMs = dh::IniInt(m_ini, L"driver", L"press_duration_ms", 120);
             if (m_pressDurationMs < 20 || m_pressDurationMs > 1000) {
                 m_pressDurationMs = 120;
             }
-            Log("Config: use_system_button=%d press_duration_ms=%d base_profile='%s'",
-                m_useSystemButton ? 1 : 0,
+            Log("Config: press_duration_ms=%d base_profile='%s'",
                 m_pressDurationMs,
                 dh::Narrow(dh::IniString(m_ini, L"driver", L"base_profile", L"")).c_str());
 
@@ -127,7 +125,7 @@ namespace {
                 }
 
                 if (wait == WAIT_OBJECT_0) {
-                    dh::PressHotkeyInput(m_pressDurationMs, m_useSystemButton);
+                    dh::PressHotkeyInput(m_pressDurationMs);
                 }
 
                 if (Clock::now() >= nextProfileCheck) {
@@ -206,7 +204,6 @@ namespace {
         std::wstring m_root;
         std::wstring m_ini;
         int m_pressDurationMs = 120;
-        bool m_useSystemButton = true;
 
         HANDLE m_pressEvent = nullptr;
         HANDLE m_quitEvent = nullptr;

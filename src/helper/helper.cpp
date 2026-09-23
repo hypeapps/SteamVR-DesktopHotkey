@@ -4,7 +4,8 @@
 // standard RegisterHotKey() API (no keyboard hooks, no input injection, nothing touches games) and
 // talks to SteamVR through the public OpenVR API:
 //   - dashboard closed -> IVROverlay::ShowDashboard(<desktop overlay key>)
-//   - dashboard open   -> signal the driver to press its virtual "system" button (closes it)
+//   - dashboard open   -> signal the driver to press the extra headset input, a head-aimed click
+//                         that closes the dashboard when the gaze is not on the dashboard panel
 //
 // Command line:
 //   desktop_hotkey_helper.exe --background   run in background (used by the driver)
@@ -233,37 +234,12 @@ namespace {
         return true;
     }
 
-    // Connects as a background app. Some setups reject background apps with error 121
-    // ("Not starting vrserver for background app") even though vrserver is running. In that case,
-    // if our driver is loaded (which proves vrserver is running, so nothing will be launched),
-    // fall back to connecting as an overlay app. No overlay is ever created.
-    vr::EVRInitError ConnectToSteamVR(bool verbose = false) {
+    // Connects as a background app: never starts SteamVR, and fails with "no server" (121) while
+    // SteamVR is not running or still starting up.
+    vr::EVRInitError ConnectToSteamVR() {
         vr::EVRInitError error = vr::VRInitError_None;
         vr::VR_Init(&error, vr::VRApplication_Background);
-        if (error == vr::VRInitError_None) {
-            g_vrInitialized = true;
-            if (verbose) {
-                Print("VR_Init(background): OK");
-            }
-            return error;
-        }
-        if (verbose) {
-            Print("VR_Init(background): %s", vr::VR_GetVRInitErrorAsEnglishDescription(error));
-        }
-
-        if (error == vr::VRInitError_Init_NoServerForBackgroundApp && IsDriverLoaded()) {
-            vr::EVRInitError overlayError = vr::VRInitError_None;
-            vr::VR_Init(&overlayError, vr::VRApplication_Overlay);
-            if (verbose) {
-                Print("VR_Init(overlay):    %s",
-                      overlayError == vr::VRInitError_None ? "OK" : vr::VR_GetVRInitErrorAsEnglishDescription(overlayError));
-            }
-            if (overlayError == vr::VRInitError_None) {
-                g_vrInitialized = true;
-                return overlayError;
-            }
-        }
-        g_vrInitialized = false;
+        g_vrInitialized = error == vr::VRInitError_None;
         return error;
     }
 
@@ -334,11 +310,11 @@ namespace {
     }
 
     std::string OverlayKey() {
-        // An empty key means: just press the system button (opens the dashboard on its last page).
+        // An empty key means: just press the headset input (opens the dashboard on its last page).
         return dh::Narrow(dh::IniString(g_ini, L"dashboard", L"desktop_overlay_key", kDefaultOverlayKey));
     }
 
-    bool PressVirtualButton() {
+    bool PressHeadsetInput() {
         HANDLE event = OpenEventW(EVENT_MODIFY_STATE, FALSE, dh::kPressEventName);
         if (!event) {
             Print("Cannot reach the desktop_hotkey driver (is it installed and enabled in SteamVR?). Error %lu",
@@ -369,8 +345,8 @@ namespace {
     void OpenDesktop() {
         const std::string configured = OverlayKey();
         if (configured.empty()) {
-            Print("Opening dashboard (system button)");
-            PressVirtualButton();
+            Print("Opening dashboard (headset input)");
+            PressHeadsetInput();
             return;
         }
 
@@ -390,8 +366,8 @@ namespace {
     }
 
     void CloseDashboard() {
-        Print("Closing dashboard (system button)");
-        PressVirtualButton();
+        Print("Closing dashboard (headset input, gaze must not be on the dashboard panel)");
+        PressHeadsetInput();
     }
 
     void Toggle() {
@@ -455,7 +431,6 @@ namespace {
             }
         }
         Print("Connected to SteamVR");
-        PrintEnvironment();
 
         const std::wstring hotkeyText = dh::IniString(g_ini, L"hotkey", L"keys", kDefaultHotkey);
         UINT modifiers = 0, vk = 0;
@@ -516,7 +491,7 @@ namespace {
         // Presses the headset input without looking at the dashboard state: if the dashboard opens,
         // the input and its binding work; if nothing happens at all, the input never arrives.
         Print("Pressing the headset input (no dashboard logic)");
-        return PressVirtualButton() ? dh::kExitOk : dh::kExitError;
+        return PressHeadsetInput() ? dh::kExitOk : dh::kExitError;
     }
 
     int RunOnce(const std::wstring& command) {
@@ -549,7 +524,7 @@ namespace {
         return error == vr::TrackedProp_Success ? buffer : "";
     }
 
-    void PrintDevicesAndInputSources() {
+    void PrintDevices() {
         Print("Tracked devices:");
         for (vr::TrackedDeviceIndex_t i = 0; i < vr::k_unMaxTrackedDeviceCount; i++) {
             const auto deviceClass = vr::VRSystem()->GetTrackedDeviceClass(i);
@@ -562,31 +537,6 @@ namespace {
                   static_cast<int>(vr::VRSystem()->GetControllerRoleForTrackedDeviceIndex(i)),
                   DeviceString(i, vr::Prop_ControllerType_String).c_str(),
                   DeviceString(i, vr::Prop_ModelNumber_String).c_str());
-        }
-
-        Print("Input sources (needs an app with an action manifest; 'no data' here is inconclusive):");
-        for (const char* path : {"/user/head",
-                                 "/user/hand/left",
-                                 "/user/hand/right",
-                                 "/user/treadmill",
-                                 "/user/stylus",
-                                 "/user/gamepad"}) {
-            vr::VRInputValueHandle_t handle = vr::k_ulInvalidInputValueHandle;
-            const auto error = vr::VRInput()->GetInputSourceHandle(path, &handle);
-            if (error != vr::VRInputError_None || handle == vr::k_ulInvalidInputValueHandle) {
-                Print("  %-18s not available (error %d)", path, static_cast<int>(error));
-                continue;
-            }
-            vr::InputOriginInfo_t info{};
-            const auto infoError = vr::VRInput()->GetOriginTrackedDeviceInfo(handle, &info, sizeof(info));
-            if (infoError != vr::VRInputError_None) {
-                Print("  %-18s exists, no device attached (error %d)", path, static_cast<int>(infoError));
-                continue;
-            }
-            Print("  %-18s device [%u] type '%s'",
-                  path,
-                  info.trackedDeviceIndex,
-                  DeviceString(info.trackedDeviceIndex, vr::Prop_ControllerType_String).c_str());
         }
     }
 
@@ -602,14 +552,14 @@ namespace {
         Print("Driver:      %s", IsDriverLoaded() ? "loaded" : "NOT loaded (install it and enable it in SteamVR > Manage Add-ons)");
         PrintEnvironment();
 
-        const auto error = ConnectToSteamVR(true);
+        const auto error = ConnectToSteamVR();
         if (error != vr::VRInitError_None) {
             Print("SteamVR:     not reachable (%s)", vr::VR_GetVRInitErrorAsEnglishDescription(error));
             return dh::kExitError;
         }
         auto* overlay = vr::VROverlay();
         Print("SteamVR:     connected, dashboard %s", overlay->IsDashboardVisible() ? "OPEN" : "closed");
-        PrintDevicesAndInputSources();
+        PrintDevices();
 
         std::vector<std::string> candidates = {
             OverlayKey(),
@@ -680,7 +630,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
                         L"Command line options:\n"
                         L"  --toggle   open desktop view / close dashboard\n"
                         L"  --open     open dashboard on desktop view\n"
-                        L"  --close    close dashboard\n"
+                        L"  --close    close dashboard (look away from the panel)\n"
+                        L"  --press    press the headset input (diagnostics)\n"
                         L"  --probe    diagnostics (run from a console)",
                         L"SteamVR-DesktopHotkey",
                         MB_OK | MB_ICONINFORMATION);

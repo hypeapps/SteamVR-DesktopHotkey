@@ -66,3 +66,5 @@ install(FILES
     README.md LICENSE
     DESTINATION .)
 install(FILES ${OPENVR_DIR}/LICENSE DESTINATION licenses RENAME openvr-LICENSE.txt)
+install(FILES third_party/minhook/LICENSE.txt DESTINATION licenses RENAME minhook-LICENSE.txt)
+install(FILES third_party/json/LICENSE.MIT DESTINATION licenses RENAME nlohmann-json-LICENSE.txt)

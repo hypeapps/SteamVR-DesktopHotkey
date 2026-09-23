@@ -1,15 +1,22 @@
 // SteamVR-DesktopHotkey - headset driver shim
 //
-// SteamVR only acts on the "open/close dashboard" action when it comes from the headset
-// (/user/head), so this shim adds one extra input to whatever headset driver is in use:
+// SteamVR only lets the headset (/user/head) drive the dashboard, so this shim adds one extra
+// input to whatever headset driver is in use:
 //
 //   1. IVRServerDriverHost::TrackedDeviceAdded is hooked, and the HMD device passed through it is
 //      wrapped by HmdShimDriver. Every call is forwarded to the original driver unchanged.
-//   2. After the original driver's Activate() has run, we read the input profile it has just set,
-//      generate a copy of it with one input added (/input/desktop_hotkey) plus a matching dashboard
-//      binding, and point the headset at the generated profile. All original inputs are kept, so
-//      whatever the headset driver provides (volume buttons, taps, proximity, ...) keeps working.
-//   3. Pressing that input from the helper's hotkey toggles the SteamVR dashboard.
+//   2. After the original driver's Activate() has run, we take its input profile (or the one named
+//      by base_profile in config.ini), write a copy of it with one input added
+//      (/input/desktop_hotkey) and matching dashboard bindings, and point the headset at the copy.
+//      The copy gets its own controller type so that SteamVR loads our bindings. All original
+//      inputs are kept, so whatever the headset driver provides keeps working.
+//   3. IVRProperties::WritePropertyBatch is hooked so that a headset driver setting its own
+//      profile a moment later (CustomHeadsetOpenVR does) cannot replace ours.
+//
+// The extra input is bound the same way SteamVR-Dashboard-KeyboardNav binds its button:
+//   - /actions/system/in/opendashboard   opens the dashboard (this action never closes it),
+//   - /actions/lasermouse/in/leftclick   a head-aimed click: on empty space next to the dashboard
+//                                        panel it closes the dashboard, on the panel it clicks.
 //
 // SPDX-License-Identifier: MIT
 
@@ -49,12 +56,7 @@ namespace {
         return "generated_hmd_bindings_vrcompositor_" + std::to_string(generation) + ".json";
     }
 
-    constexpr const char* kSystemComponent = "/input/system/click";
-
     std::atomic<vr::VRInputComponentHandle_t> g_component{vr::k_ulInvalidInputComponentHandle};
-    // The headset's own system button. SteamVR handles it natively and it both opens AND closes the
-    // dashboard, unlike the "opendashboard" action, which only opens it.
-    std::atomic<vr::VRInputComponentHandle_t> g_systemComponent{vr::k_ulInvalidInputComponentHandle};
     std::atomic<vr::PropertyContainerHandle_t> g_container{vr::k_ulInvalidPropertyContainer};
     std::mutex g_profileMutex;
     std::string g_generatedProfileResource;
@@ -237,11 +239,10 @@ namespace {
         if (!bindings.contains("bindings") || !bindings["bindings"].is_object()) {
             bindings["bindings"] = json::object();
         }
-        // Our input drives three things, the same way SteamVR-Dashboard-KeyboardNav does:
-        //  - "opendashboard" opens the dashboard,
-        //  - the laser mouse click closes it again when the gaze is not on the dashboard panel
-        //    (the open action alone never closes anything),
-        //  - and it clicks whatever the gaze points at while the dashboard is open.
+        // Our input is bound the same way SteamVR-Dashboard-KeyboardNav binds its button:
+        //  - "opendashboard" opens the dashboard (this action never closes it),
+        //  - the head-aimed laser mouse click closes the dashboard when the gaze is on empty space
+        //    next to the panel, and clicks whatever the gaze points at on the panel.
         AddOurSource(bindings, "/actions/system", "/actions/system/in/opendashboard");
         AddOurSource(bindings, "/actions/lasermouse", "/actions/lasermouse/in/leftclick");
 
@@ -399,21 +400,6 @@ namespace {
                 return status;
             }
 
-            // Take a handle on the headset's own system button as well: SteamVR treats it natively
-            // and it is the only input we found that also closes the dashboard. If the headset driver
-            // already created it, we get a handle to the same component.
-            vr::VRInputComponentHandle_t systemComponent = vr::k_ulInvalidInputComponentHandle;
-            const auto systemError =
-                vr::VRDriverInput()->CreateBooleanComponent(container, kSystemComponent, &systemComponent);
-            if (systemError == vr::VRInputError_None) {
-                g_systemComponent = systemComponent;
-                dh::Log("Got a handle on the headset system button '%s'", kSystemComponent);
-            } else {
-                dh::Log("Could not get the headset system button '%s': %d",
-                        kSystemComponent,
-                        static_cast<int>(systemError));
-            }
-
             ApplyGeneratedProfile(container, generated);
             g_container = container;
             g_component = component;
@@ -423,7 +409,6 @@ namespace {
 
         void Deactivate() override {
             g_component = vr::k_ulInvalidInputComponentHandle;
-            g_systemComponent = vr::k_ulInvalidInputComponentHandle;
             g_container = vr::k_ulInvalidPropertyContainer;
             m_inner->Deactivate();
         }
@@ -610,25 +595,16 @@ namespace dh {
         ApplyGeneratedProfile(container, generated);
     }
 
-    bool PressHotkeyInput(int pressDurationMs, bool useSystemButton) {
-        const vr::VRInputComponentHandle_t component =
-            useSystemButton ? g_systemComponent.load() : g_component.load();
+    bool PressHotkeyInput(int pressDurationMs) {
+        const vr::VRInputComponentHandle_t component = g_component;
         if (component == vr::k_ulInvalidInputComponentHandle) {
             Log("The headset input is not ready yet, ignoring the press");
             return false;
         }
 
-        Log("Pressing the headset %s for %d ms",
-            useSystemButton ? "system button" : "extra input",
-            pressDurationMs);
-
-        // The headset driver keeps writing the real button state (usually "not pressed") every frame,
-        // so hold our value by rewriting it until the press is over.
-        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(pressDurationMs);
-        while (std::chrono::steady_clock::now() < until) {
-            vr::VRDriverInput()->UpdateBooleanComponent(component, true, 0.0);
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
+        Log("Pressing the headset hotkey input for %d ms", pressDurationMs);
+        vr::VRDriverInput()->UpdateBooleanComponent(component, true, 0.0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(pressDurationMs));
         vr::VRDriverInput()->UpdateBooleanComponent(component, false, 0.0);
         return true;
     }
