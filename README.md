@@ -60,6 +60,7 @@ Edit `desktop_hotkey\config.ini` and restart SteamVR:
 | `[dashboard] when_open` | `close` | `close`, or `desktop_then_close` (switch to Desktop first if another page is shown) |
 | `[driver] start_helper` | `1` | Start the helper with SteamVR |
 | `[driver] press_duration_ms` | `120` | How long the extra headset input is held |
+| `[driver] base_profile` | empty | Input profile to extend, e.g. `{CustomHeadsetOpenVR}/input/pimaxhmd_profile.json`. Needed when the headset driver sets its profile after the device is activated — by then SteamVR has already read the bindings. Empty = whatever the headset reports at activation |
 
 Choose an unusual combination: while the helper runs, the shortcut is reserved and other programs
 (including games) will not receive it.

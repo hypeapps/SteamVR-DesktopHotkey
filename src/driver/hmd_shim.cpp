@@ -54,6 +54,10 @@ namespace {
     std::mutex g_profileMutex;
     std::string g_generatedProfileResource;
     std::string g_generatedControllerType;
+    // Buffers handed to SteamVR when we substitute property writes; they must stay alive.
+    std::string g_ownedProfileBuffer;
+    std::string g_ownedTypeBuffer;
+    thread_local bool g_inOwnWrite = false;
 
     // ---------------------------------------------------------------------------------------------
     // Paths and files
@@ -68,6 +72,10 @@ namespace {
 
     std::string ThisDriverRoot() {
         return dh::Narrow(ThisDriverRootW());
+    }
+
+    std::wstring ConfigFile() {
+        return dh::ConfigPath(ThisDriverRootW());
     }
 
     std::string DirectoryOf(const std::string& path) {
@@ -311,8 +319,10 @@ namespace {
             g_generatedProfileResource = generated.resource;
             g_generatedControllerType = generated.controllerType;
         }
+        g_inOwnWrite = true;
         vr::VRProperties()->SetStringProperty(container, vr::Prop_ControllerType_String, generated.controllerType.c_str());
         vr::VRProperties()->SetStringProperty(container, vr::Prop_InputProfilePath_String, generated.resource.c_str());
+        g_inOwnWrite = false;
         dh::Log("Headset now reports controller type '%s' and profile '%s'",
                 generated.controllerType.c_str(),
                 generated.resource.c_str());
@@ -334,9 +344,18 @@ namespace {
             }
 
             const auto container = vr::VRProperties()->TrackedDeviceToPropertyContainer(objectId);
-            const std::string originalProfile =
+            std::string originalProfile =
                 vr::VRProperties()->GetStringProperty(container, vr::Prop_InputProfilePath_String);
             dh::Log("Headset activated (id %u), its input profile is '%s'", objectId, originalProfile.c_str());
+
+            // SteamVR reads the bindings once, right after the device is added, so the profile has to
+            // be final by the time Activate() returns. A headset driver that sets its own profile a
+            // moment later (CustomHeadsetOpenVR does) would be too late, hence this setting.
+            const std::string configured = dh::Narrow(dh::IniString(ConfigFile(), L"driver", L"base_profile", L""));
+            if (!configured.empty()) {
+                dh::Log("Using the base profile from config.ini: '%s'", configured.c_str());
+                originalProfile = configured;
+            }
 
             const GeneratedProfile generated = GenerateProfile(originalProfile);
             if (!generated.ok()) {
@@ -383,6 +402,73 @@ namespace {
       private:
         vr::ITrackedDeviceServerDriver* const m_inner;
     };
+
+    // ---------------------------------------------------------------------------------------------
+    // Keeping ownership of the headset's input profile
+    //
+    // Headset drivers may set their own input profile and controller type after our Activate(); that
+    // would replace ours and SteamVR would not reload the bindings. We therefore intercept property
+    // writes for the headset and substitute our values, so SteamVR only ever sees ours.
+    // ---------------------------------------------------------------------------------------------
+    using WritePropertyBatchFn = vr::ETrackedPropertyError (*)(vr::IVRProperties*,
+                                                               vr::PropertyContainerHandle_t,
+                                                               vr::PropertyWrite_t*,
+                                                               uint32_t);
+    WritePropertyBatchFn g_originalWritePropertyBatch = nullptr;
+
+    void SubstituteOwnedValue(vr::PropertyWrite_t& entry, std::string& buffer, const std::string& value) {
+        buffer = value;
+        entry.pvBuffer = const_cast<char*>(buffer.c_str());
+        entry.unBufferSize = static_cast<uint32_t>(buffer.size() + 1);
+    }
+
+    vr::ETrackedPropertyError HookedWritePropertyBatch(vr::IVRProperties* properties,
+                                                      vr::PropertyContainerHandle_t container,
+                                                      vr::PropertyWrite_t* batch,
+                                                      uint32_t entryCount) {
+        if (!g_inOwnWrite && batch && container != vr::k_ulInvalidPropertyContainer &&
+            container == g_container.load()) {
+            std::lock_guard<std::mutex> lock(g_profileMutex);
+            if (!g_generatedProfileResource.empty()) {
+                for (uint32_t i = 0; i < entryCount; i++) {
+                    vr::PropertyWrite_t& entry = batch[i];
+                    if (entry.prop == vr::Prop_InputProfilePath_String && entry.pvBuffer) {
+                        const std::string incoming(static_cast<const char*>(entry.pvBuffer));
+                        if (incoming != g_generatedProfileResource) {
+                            dh::Log("Keeping our input profile, the headset driver tried to set '%s'",
+                                    incoming.c_str());
+                            SubstituteOwnedValue(entry, g_ownedProfileBuffer, g_generatedProfileResource);
+                        }
+                    } else if (entry.prop == vr::Prop_ControllerType_String && entry.pvBuffer) {
+                        const std::string incoming(static_cast<const char*>(entry.pvBuffer));
+                        if (incoming != g_generatedControllerType) {
+                            SubstituteOwnedValue(entry, g_ownedTypeBuffer, g_generatedControllerType);
+                        }
+                    }
+                }
+            }
+        }
+        return g_originalWritePropertyBatch(properties, container, batch, entryCount);
+    }
+
+    bool HookWritePropertyBatch() {
+        vr::EVRInitError error = vr::VRInitError_None;
+        void* properties = vr::VRDriverContext()->GetGenericInterface(vr::IVRProperties_Version, &error);
+        if (!properties || error != vr::VRInitError_None) {
+            dh::Log("IVRProperties is not available (%d)", static_cast<int>(error));
+            return false;
+        }
+        void** vtable = *reinterpret_cast<void***>(properties);
+        void* target = vtable[1]; // WritePropertyBatch
+        if (MH_CreateHook(target,
+                          reinterpret_cast<void*>(&HookedWritePropertyBatch),
+                          reinterpret_cast<void**>(&g_originalWritePropertyBatch)) != MH_OK ||
+            MH_EnableHook(target) != MH_OK) {
+            dh::Log("Could not hook IVRProperties::WritePropertyBatch");
+            return false;
+        }
+        return true;
+    }
 
     // ---------------------------------------------------------------------------------------------
     // The hook
@@ -433,6 +519,10 @@ namespace dh {
             MH_EnableHook(target) != MH_OK) {
             Log("Could not hook IVRServerDriverHost::TrackedDeviceAdded");
             return false;
+        }
+
+        if (!HookWritePropertyBatch()) {
+            Log("Continuing without property write protection: another driver may replace our profile");
         }
 
         Log("Headset shim installed");
