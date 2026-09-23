@@ -39,13 +39,17 @@ namespace {
 
             m_root = ThisDriverRoot();
             m_ini = dh::ConfigPath(m_root);
-            Log("Driver root: %s", dh::Narrow(m_root).c_str());
+            Log("Build %s, driver root: %s", dh::kBuildId, dh::Narrow(m_root).c_str());
 
-            m_useSystemButton = dh::IniInt(m_ini, L"driver", L"use_system_button", 1) != 0;
+            m_useSystemButton = dh::IniInt(m_ini, L"driver", L"use_system_button", 0) != 0;
             m_pressDurationMs = dh::IniInt(m_ini, L"driver", L"press_duration_ms", 120);
             if (m_pressDurationMs < 20 || m_pressDurationMs > 1000) {
                 m_pressDurationMs = 120;
             }
+            Log("Config: use_system_button=%d press_duration_ms=%d base_profile='%s'",
+                m_useSystemButton ? 1 : 0,
+                m_pressDurationMs,
+                dh::Narrow(dh::IniString(m_ini, L"driver", L"base_profile", L"")).c_str());
 
             m_pressEvent = CreateEventW(nullptr, FALSE /* auto-reset */, FALSE, dh::kPressEventName);
             m_quitEvent = CreateEventW(nullptr, TRUE /* manual reset */, FALSE, dh::kQuitEventName);

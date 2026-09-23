@@ -15,6 +15,12 @@
 
 namespace dh {
 
+#ifndef DH_BUILD_ID
+#define DH_BUILD_ID "unknown"
+#endif
+    // Identifies the build in the logs: commit (or "local") plus compile time.
+    inline constexpr const char* kBuildId = DH_BUILD_ID " " __DATE__ " " __TIME__;
+
     // Driver name as declared in driver.vrdrivermanifest.
     inline constexpr const char* kDriverName = "desktop_hotkey";
 

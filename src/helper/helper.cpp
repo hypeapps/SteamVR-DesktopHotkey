@@ -420,6 +420,7 @@ namespace {
     // Modes
     // ---------------------------------------------------------------------------------------------
     int RunBackground() {
+        Print("Helper build %s", dh::kBuildId);
         HANDLE mutex = CreateMutexW(nullptr, TRUE, dh::kHelperMutexName);
         if (!mutex || GetLastError() == ERROR_ALREADY_EXISTS) {
             Print("Another helper instance is already running, exiting");
@@ -590,6 +591,7 @@ namespace {
     }
 
     int RunProbe() {
+        Print("Build:       %s", dh::kBuildId);
         Print("Config file: %s", dh::Narrow(g_ini).c_str());
         Print("Log file:    %s", dh::Narrow(g_logPath).c_str());
 

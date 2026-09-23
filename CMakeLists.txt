@@ -14,6 +14,14 @@ set(OPENVR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/openvr)
 set(DRIVER_OUT desktop_hotkey)
 
 add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+
+# Build id written to every log, so each test shows exactly which build ran.
+if(DEFINED ENV{GITHUB_SHA})
+    string(SUBSTRING "$ENV{GITHUB_SHA}" 0 7 DH_BUILD_ID)
+else()
+    set(DH_BUILD_ID "local")
+endif()
+add_compile_definitions(DH_BUILD_ID="${DH_BUILD_ID}")
 if(MSVC)
     add_compile_options(/W4 /permissive- /utf-8)
 endif()
