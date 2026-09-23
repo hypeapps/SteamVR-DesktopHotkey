@@ -11,6 +11,7 @@
 //   desktop_hotkey_helper.exe --toggle       toggle once and exit (for AutoHotkey, Stream Deck, ...)
 //   desktop_hotkey_helper.exe --open         open the dashboard on the desktop view
 //   desktop_hotkey_helper.exe --close        close the dashboard if it is open
+//   desktop_hotkey_helper.exe --press        press the headset input directly (diagnostics)
 //   desktop_hotkey_helper.exe --probe        print dashboard/overlay diagnostics
 //
 // SPDX-License-Identifier: MIT
@@ -510,6 +511,13 @@ namespace {
         return dh::kExitOk;
     }
 
+    int RunPress() {
+        // Presses the headset input without looking at the dashboard state: if the dashboard opens,
+        // the input and its binding work; if nothing happens at all, the input never arrives.
+        Print("Pressing the headset input (no dashboard logic)");
+        return PressVirtualButton() ? dh::kExitOk : dh::kExitError;
+    }
+
     int RunOnce(const std::wstring& command) {
         const auto error = ConnectToSteamVR();
         if (error != vr::VRInitError_None) {
@@ -635,6 +643,7 @@ namespace {
               "  --toggle      open the desktop view / close the dashboard\n"
               "  --open        open the dashboard on the desktop view\n"
               "  --close       close the dashboard\n"
+              "  --press       press the headset input directly (diagnostics)\n"
               "  --probe       print diagnostics");
     }
 
@@ -657,6 +666,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         result = RunBackground();
     } else if (command == L"--toggle" || command == L"--open" || command == L"--close") {
         result = RunOnce(command);
+    } else if (command == L"--press") {
+        result = RunPress();
     } else if (command == L"--probe") {
         result = RunProbe();
     } else {
