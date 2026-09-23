@@ -53,6 +53,7 @@ namespace {
     std::atomic<vr::PropertyContainerHandle_t> g_container{vr::k_ulInvalidPropertyContainer};
     std::mutex g_profileMutex;
     std::string g_generatedProfileResource;
+    std::string g_generatedControllerType;
 
     // ---------------------------------------------------------------------------------------------
     // Paths and files
@@ -225,9 +226,19 @@ namespace {
         return fileName;
     }
 
-    // Generates a copy of the headset's input profile with our extra input, and returns the resource
-    // path of the generated profile (empty on failure).
-    std::string GenerateProfile(const std::string& originalProfileResource) {
+    struct GeneratedProfile {
+        std::string resource;       // "{desktop_hotkey}/input/generated_hmd_profile_N.json"
+        std::string controllerType; // the new controller type the headset has to report
+
+        bool ok() const {
+            return !resource.empty();
+        }
+    };
+
+    // Generates a copy of the headset's input profile with our extra input. The copy gets its own
+    // controller type: SteamVR keys loaded bindings by controller type and would otherwise keep the
+    // bindings it had already loaded for the original type and never read our file.
+    GeneratedProfile GenerateProfile(const std::string& originalProfileResource) {
         const int generation = ++g_generation;
         const std::string originalPath = ResolveResourcePath(originalProfileResource, {});
         json profile;
@@ -244,6 +255,12 @@ namespace {
             originalDirectory = DirectoryOf(originalPath);
             dh::Log("Extending the headset input profile '%s'", originalPath.c_str());
         }
+
+        std::string controllerType = profile.value("controller_type", std::string("hmd"));
+        if (controllerType.size() < 3 || controllerType.substr(controllerType.size() - 3) != "_dh") {
+            controllerType += "_dh";
+        }
+        profile["controller_type"] = controllerType;
 
         if (!profile.contains("input_source") || !profile["input_source"].is_object()) {
             profile["input_source"] = json::object();
@@ -281,7 +298,24 @@ namespace {
             return {};
         }
         dh::Log("Wrote '%s'", outputPath.c_str());
-        return std::string("{") + dh::kDriverName + "}/input/" + fileName;
+
+        GeneratedProfile result;
+        result.resource = std::string("{") + dh::kDriverName + "}/input/" + fileName;
+        result.controllerType = controllerType;
+        return result;
+    }
+
+    void ApplyGeneratedProfile(vr::PropertyContainerHandle_t container, const GeneratedProfile& generated) {
+        {
+            std::lock_guard<std::mutex> lock(g_profileMutex);
+            g_generatedProfileResource = generated.resource;
+            g_generatedControllerType = generated.controllerType;
+        }
+        vr::VRProperties()->SetStringProperty(container, vr::Prop_ControllerType_String, generated.controllerType.c_str());
+        vr::VRProperties()->SetStringProperty(container, vr::Prop_InputProfilePath_String, generated.resource.c_str());
+        dh::Log("Headset now reports controller type '%s' and profile '%s'",
+                generated.controllerType.c_str(),
+                generated.resource.c_str());
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -304,8 +338,8 @@ namespace {
                 vr::VRProperties()->GetStringProperty(container, vr::Prop_InputProfilePath_String);
             dh::Log("Headset activated (id %u), its input profile is '%s'", objectId, originalProfile.c_str());
 
-            const std::string generated = GenerateProfile(originalProfile);
-            if (generated.empty()) {
+            const GeneratedProfile generated = GenerateProfile(originalProfile);
+            if (!generated.ok()) {
                 dh::Log("Could not generate the extended input profile, leaving the headset untouched");
                 return status;
             }
@@ -317,14 +351,10 @@ namespace {
                 return status;
             }
 
-            {
-                std::lock_guard<std::mutex> lock(g_profileMutex);
-                g_generatedProfileResource = generated;
-            }
-            vr::VRProperties()->SetStringProperty(container, vr::Prop_InputProfilePath_String, generated.c_str());
+            ApplyGeneratedProfile(container, generated);
             g_container = container;
             g_component = component;
-            dh::Log("Added '%s' to the headset and switched it to '%s'", kInputComponent, generated.c_str());
+            dh::Log("Added '%s' to the headset", kInputComponent);
             return status;
         }
 
@@ -419,27 +449,30 @@ namespace dh {
             return;
         }
 
-        const std::string current = vr::VRProperties()->GetStringProperty(container, vr::Prop_InputProfilePath_String);
+        const std::string currentProfile =
+            vr::VRProperties()->GetStringProperty(container, vr::Prop_InputProfilePath_String);
+        const std::string currentType =
+            vr::VRProperties()->GetStringProperty(container, vr::Prop_ControllerType_String);
         {
             std::lock_guard<std::mutex> lock(g_profileMutex);
-            if (current.empty() || current == g_generatedProfileResource) {
+            if (currentProfile.empty()) {
+                return;
+            }
+            if (currentProfile == g_generatedProfileResource && currentType == g_generatedControllerType) {
                 return;
             }
         }
 
-        // The headset driver replaced our profile (it often sets its own a moment after Activate).
-        // Extend whatever it set now and put ours back.
-        Log("The headset switched to '%s', extending that profile instead", current.c_str());
-        const std::string generated = GenerateProfile(current);
-        if (generated.empty()) {
+        // The headset driver replaced our profile (it often sets its own a moment after Activate,
+        // and again whenever its settings change). Extend whatever it set now and put ours back.
+        Log("The headset switched to '%s' (type '%s'), extending that profile instead",
+            currentProfile.c_str(),
+            currentType.c_str());
+        const GeneratedProfile generated = GenerateProfile(currentProfile);
+        if (!generated.ok()) {
             return;
         }
-        {
-            std::lock_guard<std::mutex> lock(g_profileMutex);
-            g_generatedProfileResource = generated;
-        }
-        vr::VRProperties()->SetStringProperty(container, vr::Prop_InputProfilePath_String, generated.c_str());
-        Log("Re-applied '%s' to the headset", generated.c_str());
+        ApplyGeneratedProfile(container, generated);
     }
 
     bool PressHotkeyInput(int pressDurationMs) {
