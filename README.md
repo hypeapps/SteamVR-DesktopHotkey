@@ -72,8 +72,8 @@ Findings from SteamVR 2.15, so nobody has to repeat them:
    (or a release zip if available) and extract it somewhere permanent, e.g. `D:\VR\SteamVR-DesktopHotkey`.
 2. **Close SteamVR.**
 3. Run `install.bat`.
-4. If your headset driver sets its input profile late (CustomHeadsetOpenVR does), set `base_profile` in
-   `desktop_hotkey\config.ini` — see *Configuration*.
+4. Check `base_profile` in `desktop_hotkey\config.ini` — see *Configuration*. The default suits a Pimax
+   headset with CustomHeadsetOpenVR; with other headsets you can leave it or clear it.
 5. Start SteamVR and make sure **Settings → Startup/Shutdown → Manage Add-ons → desktop_hotkey** is **On**.
 
 Updating: close SteamVR and replace everything in the folder **except `desktop_hotkey\config.ini`**.
@@ -92,7 +92,7 @@ Edit `desktop_hotkey\config.ini` and restart SteamVR:
 | `[dashboard] when_open` | `close` | `close`, or `desktop_then_close` (switch to Desktop first if another page is shown) |
 | `[driver] start_helper` | `1` | Start the helper with SteamVR |
 | `[driver] press_duration_ms` | `120` | How long the headset input is held |
-| `[driver] base_profile` | empty | Input profile to extend. Empty = whatever the headset reports when it is activated. **CustomHeadsetOpenVR with a Pimax headset:** `{CustomHeadsetOpenVR}/input/pimaxhmd_profile.json` |
+| `[driver] base_profile` | `{CustomHeadsetOpenVR}/input/pimaxhmd_profile.json` | Input profile to extend. The default is for a Pimax headset with CustomHeadsetOpenVR, which sets its own profile too late. **Other headsets:** leave it empty (the profile the headset reports is extended); if the named profile does not exist, the headset's own profile is used anyway. If the log shows `Keeping our input profile, the headset driver tried to set '...'`, put that value here |
 
 Choose an unusual key combination: while the helper runs, the shortcut is reserved and other programs
 (including games) will not receive it.

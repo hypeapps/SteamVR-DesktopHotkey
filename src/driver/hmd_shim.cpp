@@ -383,8 +383,19 @@ namespace {
             // moment later (CustomHeadsetOpenVR does) would be too late, hence this setting.
             const std::string configured = dh::Narrow(dh::IniString(ConfigFile(), L"driver", L"base_profile", L""));
             if (!configured.empty()) {
-                dh::Log("Using the base profile from config.ini: '%s'", configured.c_str());
-                originalProfile = configured;
+                // The default config names the CustomHeadsetOpenVR profile. Without that driver the
+                // file does not exist: fall back to the headset's own profile instead of generating
+                // one without the headset's inputs.
+                const std::string configuredPath = ResolveResourcePath(configured, {});
+                if (!configuredPath.empty() && GetFileAttributesW(dh::Widen(configuredPath).c_str()) != INVALID_FILE_ATTRIBUTES) {
+                    dh::Log("Using the base profile from config.ini: '%s'", configured.c_str());
+                    originalProfile = configured;
+                } else {
+                    dh::Log("The base profile '%s' from config.ini does not exist here, using the headset's own "
+                            "profile '%s'",
+                            configured.c_str(),
+                            originalProfile.c_str());
+                }
             }
 
             const GeneratedProfile generated = GenerateProfile(originalProfile);
