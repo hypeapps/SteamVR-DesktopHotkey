@@ -15,4 +15,8 @@ namespace dh {
     // True once the shimmed headset has been activated and our input exists.
     bool IsHmdShimReady();
 
+    // Re-applies our generated input profile if the headset driver has replaced it (it may set its
+    // own profile after our Activate(), or whenever its settings change). Cheap, call it regularly.
+    void MaintainHmdProfile();
+
 } // namespace dh

@@ -26,6 +26,7 @@
 #include <atomic>
 #include <chrono>
 #include <fstream>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -40,6 +41,9 @@ namespace {
     constexpr const char* kGeneratedBindingsFile = "generated_hmd_bindings_vrcompositor.json";
 
     std::atomic<vr::VRInputComponentHandle_t> g_component{vr::k_ulInvalidInputComponentHandle};
+    std::atomic<vr::PropertyContainerHandle_t> g_container{vr::k_ulInvalidPropertyContainer};
+    std::mutex g_profileMutex;
+    std::string g_generatedProfileResource;
 
     // ---------------------------------------------------------------------------------------------
     // Paths and files
@@ -284,7 +288,12 @@ namespace {
                 return status;
             }
 
+            {
+                std::lock_guard<std::mutex> lock(g_profileMutex);
+                g_generatedProfileResource = generated;
+            }
             vr::VRProperties()->SetStringProperty(container, vr::Prop_InputProfilePath_String, generated.c_str());
+            g_container = container;
             g_component = component;
             dh::Log("Added '%s' to the headset and switched it to '%s'", kInputComponent, generated.c_str());
             return status;
@@ -292,6 +301,7 @@ namespace {
 
         void Deactivate() override {
             g_component = vr::k_ulInvalidInputComponentHandle;
+            g_container = vr::k_ulInvalidPropertyContainer;
             m_inner->Deactivate();
         }
 
@@ -370,6 +380,35 @@ namespace dh {
 
     bool IsHmdShimReady() {
         return g_component != vr::k_ulInvalidInputComponentHandle;
+    }
+
+    void MaintainHmdProfile() {
+        const vr::PropertyContainerHandle_t container = g_container;
+        if (container == vr::k_ulInvalidPropertyContainer) {
+            return;
+        }
+
+        const std::string current = vr::VRProperties()->GetStringProperty(container, vr::Prop_InputProfilePath_String);
+        {
+            std::lock_guard<std::mutex> lock(g_profileMutex);
+            if (current.empty() || current == g_generatedProfileResource) {
+                return;
+            }
+        }
+
+        // The headset driver replaced our profile (it often sets its own a moment after Activate).
+        // Extend whatever it set now and put ours back.
+        Log("The headset switched to '%s', extending that profile instead", current.c_str());
+        const std::string generated = GenerateProfile(current);
+        if (generated.empty()) {
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_profileMutex);
+            g_generatedProfileResource = generated;
+        }
+        vr::VRProperties()->SetStringProperty(container, vr::Prop_InputProfilePath_String, generated.c_str());
+        Log("Re-applied '%s' to the headset", generated.c_str());
     }
 
     bool PressHotkeyInput(int pressDurationMs) {

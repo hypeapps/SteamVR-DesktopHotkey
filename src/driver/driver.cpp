@@ -111,6 +111,9 @@ namespace {
         void WorkerThread() {
             // Give vrserver a moment to finish starting before launching the helper.
             auto nextHelperCheck = Clock::now() + 2s;
+            const auto shimDeadline = Clock::now() + 20s;
+            auto nextProfileCheck = Clock::now() + 2s;
+            bool warnedAboutShim = false;
 
             while (m_running) {
                 const DWORD wait = m_pressEvent ? WaitForSingleObject(m_pressEvent, 50) : (Sleep(50), WAIT_TIMEOUT);
@@ -120,6 +123,17 @@ namespace {
 
                 if (wait == WAIT_OBJECT_0) {
                     dh::PressHotkeyInput(m_pressDurationMs);
+                }
+
+                if (Clock::now() >= nextProfileCheck) {
+                    nextProfileCheck = Clock::now() + 2s;
+                    dh::MaintainHmdProfile();
+                }
+
+                if (!warnedAboutShim && Clock::now() >= shimDeadline && !dh::IsHmdShimReady()) {
+                    warnedAboutShim = true;
+                    Log("No headset went through our shim. This driver most likely loaded after the headset "
+                        "driver - check that resources/settings/default.vrsettings still sets a high loadPriority.");
                 }
 
                 if (Clock::now() >= nextHelperCheck) {
