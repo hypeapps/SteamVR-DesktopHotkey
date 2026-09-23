@@ -31,8 +31,12 @@ It is a small SteamVR add-on that works alongside other drivers such as
    The driver also starts the helper together with SteamVR (and restarts it if it crashes).
 2. **Helper** (`desktop_hotkey_helper.exe`) registers the hotkey and, when pressed:
    - dashboard closed → opens it on the Desktop page (`ShowDashboard`);
-   - dashboard open → asks the driver to press the extra headset input, which closes the dashboard.
-   OpenVR has no public "hide dashboard" call, which is why the extra input exists.
+   - dashboard open → asks the driver to press the headset's system button, which closes it.
+   OpenVR has no public "hide dashboard" call, which is why the driver presses an input instead.
+
+The `opendashboard` action that input profiles can bind only ever opens the dashboard; it never closes
+it (verified on SteamVR 2.15). The headset's `/input/system` button, on the other hand, is handled by
+SteamVR itself and toggles the dashboard, which is what this driver presses.
 
 Why the headset and not a device of our own: SteamVR only acts on the "open/close dashboard" action when
 it comes from `/user/head`. A separate virtual device is registered and bound without any error, but
@@ -59,7 +63,8 @@ Edit `desktop_hotkey\config.ini` and restart SteamVR:
 | `[dashboard] desktop_overlay_key` | `system.desktop.1` | Overlay key of the Desktop page (`system.desktop.1` = monitor 1 on current SteamVR, `valve.steam.desktop` on older versions); empty = open dashboard on its last page |
 | `[dashboard] when_open` | `close` | `close`, or `desktop_then_close` (switch to Desktop first if another page is shown) |
 | `[driver] start_helper` | `1` | Start the helper with SteamVR |
-| `[driver] press_duration_ms` | `120` | How long the extra headset input is held |
+| `[driver] use_system_button` | `1` | Press the headset's own system button (handled natively by SteamVR: opens **and** closes the dashboard). `0` presses the extra input this driver adds, which is bound to the `opendashboard` action — that action only opens |
+| `[driver] press_duration_ms` | `120` | How long the headset input is held |
 | `[driver] base_profile` | empty | Input profile to extend, e.g. `{CustomHeadsetOpenVR}/input/pimaxhmd_profile.json`. Needed when the headset driver sets its profile after the device is activated — by then SteamVR has already read the bindings. Empty = whatever the headset reports at activation |
 
 Choose an unusual combination: while the helper runs, the shortcut is reserved and other programs

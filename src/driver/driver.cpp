@@ -41,6 +41,7 @@ namespace {
             m_ini = dh::ConfigPath(m_root);
             Log("Driver root: %s", dh::Narrow(m_root).c_str());
 
+            m_useSystemButton = dh::IniInt(m_ini, L"driver", L"use_system_button", 1) != 0;
             m_pressDurationMs = dh::IniInt(m_ini, L"driver", L"press_duration_ms", 120);
             if (m_pressDurationMs < 20 || m_pressDurationMs > 1000) {
                 m_pressDurationMs = 120;
@@ -122,7 +123,7 @@ namespace {
                 }
 
                 if (wait == WAIT_OBJECT_0) {
-                    dh::PressHotkeyInput(m_pressDurationMs);
+                    dh::PressHotkeyInput(m_pressDurationMs, m_useSystemButton);
                 }
 
                 if (Clock::now() >= nextProfileCheck) {
@@ -201,6 +202,7 @@ namespace {
         std::wstring m_root;
         std::wstring m_ini;
         int m_pressDurationMs = 120;
+        bool m_useSystemButton = true;
 
         HANDLE m_pressEvent = nullptr;
         HANDLE m_quitEvent = nullptr;

@@ -49,7 +49,12 @@ namespace {
         return "generated_hmd_bindings_vrcompositor_" + std::to_string(generation) + ".json";
     }
 
+    constexpr const char* kSystemComponent = "/input/system/click";
+
     std::atomic<vr::VRInputComponentHandle_t> g_component{vr::k_ulInvalidInputComponentHandle};
+    // The headset's own system button. SteamVR handles it natively and it both opens AND closes the
+    // dashboard, unlike the "opendashboard" action, which only opens it.
+    std::atomic<vr::VRInputComponentHandle_t> g_systemComponent{vr::k_ulInvalidInputComponentHandle};
     std::atomic<vr::PropertyContainerHandle_t> g_container{vr::k_ulInvalidPropertyContainer};
     std::mutex g_profileMutex;
     std::string g_generatedProfileResource;
@@ -370,6 +375,21 @@ namespace {
                 return status;
             }
 
+            // Take a handle on the headset's own system button as well: SteamVR treats it natively
+            // and it is the only input we found that also closes the dashboard. If the headset driver
+            // already created it, we get a handle to the same component.
+            vr::VRInputComponentHandle_t systemComponent = vr::k_ulInvalidInputComponentHandle;
+            const auto systemError =
+                vr::VRDriverInput()->CreateBooleanComponent(container, kSystemComponent, &systemComponent);
+            if (systemError == vr::VRInputError_None) {
+                g_systemComponent = systemComponent;
+                dh::Log("Got a handle on the headset system button '%s'", kSystemComponent);
+            } else {
+                dh::Log("Could not get the headset system button '%s': %d",
+                        kSystemComponent,
+                        static_cast<int>(systemError));
+            }
+
             ApplyGeneratedProfile(container, generated);
             g_container = container;
             g_component = component;
@@ -379,6 +399,7 @@ namespace {
 
         void Deactivate() override {
             g_component = vr::k_ulInvalidInputComponentHandle;
+            g_systemComponent = vr::k_ulInvalidInputComponentHandle;
             g_container = vr::k_ulInvalidPropertyContainer;
             m_inner->Deactivate();
         }
@@ -565,16 +586,25 @@ namespace dh {
         ApplyGeneratedProfile(container, generated);
     }
 
-    bool PressHotkeyInput(int pressDurationMs) {
-        const vr::VRInputComponentHandle_t component = g_component;
+    bool PressHotkeyInput(int pressDurationMs, bool useSystemButton) {
+        const vr::VRInputComponentHandle_t component =
+            useSystemButton ? g_systemComponent.load() : g_component.load();
         if (component == vr::k_ulInvalidInputComponentHandle) {
             Log("The headset input is not ready yet, ignoring the press");
             return false;
         }
 
-        Log("Pressing the headset hotkey input for %d ms", pressDurationMs);
-        vr::VRDriverInput()->UpdateBooleanComponent(component, true, 0.0);
-        std::this_thread::sleep_for(std::chrono::milliseconds(pressDurationMs));
+        Log("Pressing the headset %s for %d ms",
+            useSystemButton ? "system button" : "extra input",
+            pressDurationMs);
+
+        // The headset driver keeps writing the real button state (usually "not pressed") every frame,
+        // so hold our value by rewriting it until the press is over.
+        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(pressDurationMs);
+        while (std::chrono::steady_clock::now() < until) {
+            vr::VRDriverInput()->UpdateBooleanComponent(component, true, 0.0);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
         vr::VRDriverInput()->UpdateBooleanComponent(component, false, 0.0);
         return true;
     }
