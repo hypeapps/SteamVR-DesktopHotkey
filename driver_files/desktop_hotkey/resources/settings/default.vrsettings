@@ -1,5 +1,6 @@
 {
 	"driver_desktop_hotkey": {
-		"enable": true
+		"enable": true,
+		"loadPriority": 10001
 	}
 }
