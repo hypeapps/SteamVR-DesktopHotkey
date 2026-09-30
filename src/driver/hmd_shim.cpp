@@ -242,9 +242,19 @@ namespace {
         // Our input is bound the same way SteamVR-Dashboard-KeyboardNav binds its button:
         //  - "opendashboard" opens the dashboard (this action never closes it),
         //  - the head-aimed laser mouse click closes the dashboard when the gaze is on empty space
-        //    next to the panel, and clicks whatever the gaze points at on the panel.
+        //    next to the panel, and clicks whatever the gaze points at on the panel,
+        //  - "SwitchLaserHand" moves the laser to the headset. Without it the laser stays assigned to
+        //    a controller that was used earlier (even after it is switched off) and the head-aimed
+        //    click is ignored, so the dashboard could not be closed.
         AddOurSource(bindings, "/actions/system", "/actions/system/in/opendashboard");
         AddOurSource(bindings, "/actions/lasermouse", "/actions/lasermouse/in/leftclick");
+        AddOurSource(bindings, "/actions/lasermouse_secondary", "/actions/lasermouse_secondary/in/SwitchLaserHand");
+        {
+            json& secondary = bindings["bindings"]["/actions/lasermouse_secondary"];
+            if (!secondary.contains("poses") || !secondary["poses"].is_array()) {
+                secondary["poses"] = json::array();
+            }
+        }
 
         // The laser mouse needs a pointer pose; keep the headset's own if the profile had one.
         json& laser = bindings["bindings"]["/actions/lasermouse"];
